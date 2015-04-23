@@ -2,7 +2,8 @@
 (
 	[Parameter(Mandatory=$false)][Alias('Dir')][Array]$DirList="\\ES-SSCCM-01\DSL",
 	[Parameter(Mandatory=$false)][Alias('OutFile')][String]$Output = "Results.html",
-    [Parameter(Mandatory=$false)][String]$Depth="2"
+    [Parameter(Mandatory=$false)][Alias('OutType')][ValidateSet("CSV","HTML")][String]$OutputType = "HTML",
+    [Parameter(Mandatory=$false)][String]$Depth="255"
 )
 
 #Check for and load NTFSSecurity module if it's missing
@@ -19,8 +20,11 @@ foreach($DL in $DirList) {
     $ChildList+=(Get-ChildItemToDepth -Path $DL -ToDepth $Depth)
     }
 
-#Gather all non-inherited permissions and save to HTML
-get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | ConvertTo-HTML | Out-File $Output
+#Gather all non-inherited permissions and save based on defined type
+Switch ($OutputType) {
+    HTML {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | ConvertTo-HTML | Out-File $Output}
+    CSV {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | Export-Csv $Output}
+    }
 
 
 #This function solves the lack of depth selection in Get-ChildItem (won't be needed in PSv5)
