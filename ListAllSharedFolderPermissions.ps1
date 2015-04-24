@@ -11,22 +11,6 @@ IF (!(Get-Module NTFSSecurity)) {
     Import-Module .\NTFSSecurity\NTFSSecurity.psd1
     }
 
-#Start with an empty array to be populated
-[array]$ChildList = $null
-
-#Add each defined URL to array with child paths
-foreach($DL in $DirList) {
-    $ChildList+=$DL
-    $ChildList+=(Get-ChildItemToDepth -Path $DL -ToDepth $Depth)
-    }
-
-#Gather all non-inherited permissions and save based on defined type
-Switch ($OutputType) {
-    HTML {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | ConvertTo-HTML | Out-File $Output}
-    CSV {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | Export-Csv $Output}
-    }
-
-
 #This function solves the lack of depth selection in Get-ChildItem (won't be needed in PSv5)
 function Get-ChildItemToDepth {
   param(
@@ -52,3 +36,20 @@ function Get-ChildItemToDepth {
     }
   }
 }
+
+#Start with an empty array to be populated
+[array]$ChildList = $null
+
+#Add each defined URL to array with child paths
+foreach($DL in $DirList) {
+    $ChildList+=$DL
+    $ChildList+=(Get-ChildItemToDepth -Path $DL -ToDepth $Depth)
+    }
+
+#Gather all non-inherited permissions and save based on defined type
+Switch ($OutputType) {
+    HTML {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | ConvertTo-HTML | Out-File $Output}
+    CSV {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | Export-Csv $Output}
+    }
+
+
