@@ -1,6 +1,6 @@
 ﻿Param
 (
-	[Parameter(Mandatory=$false)][Alias('Dir')][Array]$DirList="\\ES-SSCCM-01\DSL",
+	[Parameter(Mandatory=$false)][Alias('Dir')][Array]$DirList="\\proximus.prosum.com\DFS",
 	[Parameter(Mandatory=$false)][Alias('OutFile')][String]$Output = "Results.html",
     [Parameter(Mandatory=$false)][Alias('OutType')][ValidateSet("CSV","HTML")][String]$OutputType = "HTML",
     [Parameter(Mandatory=$false)][String]$Depth="255"
@@ -8,10 +8,27 @@
 
 #Check for and load NTFSSecurity module if it's missing
 IF (!(Get-Module NTFSSecurity)) {
-    Import-Module .\NTFSSecurity\NTFSSecurity.psd1
+    write-verbose "Importing the NTFSSecurity Module ..."
+    Try {
+        Import-Module .\NTFSSecurity\NTFSSecurity.psd1
+        }
+    Catch {
+        Throw "unable to load the NTFSSecurity PowerShell Module. Please ensure the modules exist under .\NTFSSecurity or import them manually"
+        }
+    }
+
+IF (!(Get-Module DFSN)) {
+    write-verbose "Importing the DFSN Module ..."
+    Try {
+        Import-Module DFSN
+        }
+    Catch {
+        Throw "unable to load the DFSN PowerShell Module.  Please use add-remove programs to add DFS name space management tools or run from a serve rwith these tools installed"
+        }
     }
 
 #This function solves the lack of depth selection in Get-ChildItem (won't be needed in PSv5)
+write-verbose "creating custom function to crawl folders to specified depth ..."
 function Get-ChildItemToDepth {
   param(
     [String]$Path = $PWD,
@@ -41,9 +58,28 @@ function Get-ChildItemToDepth {
 [array]$ChildList = $null
 
 #Add each defined URL to array with child paths
+write-verbose "Building full directory tree (this could take awhile) ..."
 foreach($DL in $DirList) {
     $ChildList+=$DL
     $ChildList+=(Get-ChildItemToDepth -Path $DL -ToDepth $Depth)
+    }
+
+#Crawl Array and attempt to replace all DFS paths with valid UNC Targets
+write-verbose "attempting to find and translate any DFS namespaces to UNC paths ... "
+[array]$DFSConvert = @()
+foreach ($DL in $ChildList) {
+    If (Get-DfsnFolderTarget $DL -ErrorAction SilentlyContinue| where {$_.State -eq "Online"}) {
+        $NewPath = (Get-DfsnFolderTarget $DL -ErrorAction SilentlyContinue| where {$_.State -eq "Online"})[0]
+        write-verbose "path $DL needs to be updated to $NewPath ..."
+        $object = New-Object -TypeName PSObject
+        $Object | Add-Member -Name 'Original' -MemberType NoteProperty -Value $DL
+        $Object | Add-Member -Name 'Updated' -MemberType NoteProperty -Value $NewPath
+        $DFSConvert+=$Object
+        }
+    Else {
+        $NewPath=$null
+        write-verbose "Path $DL is not a folder target"
+        }
     }
 
 #Gather all non-inherited permissions and save based on defined type
