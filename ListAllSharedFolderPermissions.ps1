@@ -71,10 +71,7 @@ foreach ($DL in $ChildList) {
     If (Get-DfsnFolderTarget $DL -ErrorAction SilentlyContinue| where {$_.State -eq "Online"}) {
         $NewPath = (Get-DfsnFolderTarget $DL -ErrorAction SilentlyContinue| where {$_.State -eq "Online"})[0]
         write-verbose "path $DL needs to be updated to $NewPath ..."
-        $object = New-Object -TypeName PSObject
-        $Object | Add-Member -Name 'Original' -MemberType NoteProperty -Value $DL
-        $Object | Add-Member -Name 'Updated' -MemberType NoteProperty -Value $NewPath
-        $DFSConvert+=$Object
+        $DFSConvert+=$NewPath
         }
     Else {
         $NewPath=$null
@@ -82,10 +79,24 @@ foreach ($DL in $ChildList) {
         }
     }
 
+#This simple sort makes sure we remap longer filename paths first and avoid breaking by mapping shorter paths first
+$DFSConvert = $DFSConvert | sort {$_Path.length}
+
+#Rebuild ChildList with new values
+write-verbose "Updating list with actual UNC paths"
+$DFSConvert | ForEach-Object {
+    $Source = [regex]::escape($_.Path)
+    $Target = $_.TargetPath
+    $ChildList = $ChildList -replace($Source,$Target)
+    } 
+
 #Gather all non-inherited permissions and save based on defined type
+write-verbose "Generating report..."
 Switch ($OutputType) {
     HTML {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | ConvertTo-HTML | Out-File $Output}
     CSV {get-ntfsaccess -Path $ChildList | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | Export-Csv $Output}
     }
+
+write-verbose "Done!"
 
 
