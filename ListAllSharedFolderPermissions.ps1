@@ -3,7 +3,7 @@
 	[Parameter(Mandatory=$false)][Alias('Dir')][Array]$DirList="\\proximus.prosum.com\DFS",
 	[Parameter(Mandatory=$false)][Alias('OutFile')][String]$Output = "Results.csv",
     [Parameter(Mandatory=$false)][Alias('OutType')][ValidateSet("CSV","HTML")][String]$OutputType = "CSV",
-    [Parameter(Mandatory=$false)][String]$Depth="10"
+    [Parameter(Mandatory=$false)][String]$Depth="3"
 )
 
 #Check for and load NTFSSecurity module if it's missing
@@ -84,9 +84,10 @@ foreach ($DL in $ChildList) {
 #This simple sort makes sure we remap longer filename paths first and avoid breaking by mapping shorter paths first
 $DFSConvert = $DFSConvert | sort {$_Path.length}
 
-#Build ChildList2 with new values
-[array]$ChildList2=$null
-write-verbose "Updating DFSNamespace links ..."
+#Build FinalList with new path and permissions
+[array]$FinalList=$null
+$i=0
+write-verbose "Updating DFSNamespace..."
 $ChildList | ForEach-Object {
     $Source = $_
     $newvalue=$null
@@ -99,22 +100,23 @@ $ChildList | ForEach-Object {
             $NewValue = ($_ -replace($Testinj,$TargetTest))
             }
         }
-    if ($newvalue -eq $null) {$ChildList2+=$Source}
-    else {$ChildList2+=$newvalue}
-    }
-
-#combine the two lists into a FinalList
-$stepsstop=$ChildList.count-1
-$range=0..$stepsstop
-foreach ($i in $range) {
-    $finallist+= @{$ChildList[$i] = $ChildList2[$i]}
+    if ($newvalue -eq $null) {$newvalue=$Source}
+    write-verbose "checking for explicit permissions on $newvalue..."
+    $perms = (Get-NTFSAccess -Path $newvalue | where {$_.IsInherited -eq $false} | Select Account, AccessRights)
+    $tempobject = New-Object -TypeName PSObject
+    $tempobject | Add-Member -MemberType NoteProperty -Name NameSpace -Value $ChildList[$i]
+    $tempobject | Add-Member -MemberType NoteProperty -Name UNC -Value $NewValue
+    $tempobject | Add-Member -MemberType NoteProperty -Name Permissions -Value $perms
+    #@{NameSpace=$ChildList[$i];UNC=$newvalue;Permissions=$perms}
+    [array]$FinalList+=$tempobject
+    $i++
     }
 
 #Gather all non-inherited permissions and save based on defined type
 write-verbose "Generating report..."
 Switch ($OutputType) {
-    HTML {get-ntfsaccess -Path $ChildList2 | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | ConvertTo-HTML | Out-File $Output}
-    CSV {get-ntfsaccess -Path $ChildList2 | where {$_.IsInherited -eq $false} | Select FullName, AccountType, Account, AccessControlType, AccessRights | Export-Csv $Output}
+    HTML {$finallist | select NameSpace, UNC, @{Label='Permissions';EXPRESSION={$_.permissions | out-string}} | ConvertTo-Html | Out-File $Output}
+    CSV {$finallist | select NameSpace, UNC, @{Label='Permissions';EXPRESSION={$_.permissions | out-string}} | Export-Csv $Output}
     }
 
 write-verbose "Done!"
