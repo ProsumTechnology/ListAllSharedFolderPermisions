@@ -3,7 +3,7 @@
 	[Parameter(Mandatory=$false)][Alias('Dir')][Array]$DirList="\\proximus.prosum.com\DFS",
 	[Parameter(Mandatory=$false)][Alias('OutFile')][String]$Output = "Results.csv",
     [Parameter(Mandatory=$false)][Alias('OutType')][ValidateSet("CSV","HTML")][String]$OutputType = "CSV",
-    [Parameter(Mandatory=$false)][String]$Depth="3"
+    [Parameter(Mandatory=$false)][String]$Depth="10"
 )
 
 #Check for and load NTFSSecurity module if it's missing
@@ -65,58 +65,61 @@ foreach($DL in $DirList) {
     $ChildList+=(Get-ChildItemToDepth -Path $DL -ToDepth $Depth)
     }
 
-
-#Crawl Array and attempt to identify all DFS paths with valid UNC Targets
-write-verbose "attempting to find and translate any DFS namespaces to UNC paths ... "
+#Because variables will be added to, start clean
 [array]$DFSConvert = @()
-foreach ($DL in $ChildList) {
-    If (Get-DfsnFolderTarget $DL -ErrorAction SilentlyContinue| where {$_.State -eq "Online"}) {
-        $NewPath = (Get-DfsnFolderTarget $DL -ErrorAction SilentlyContinue| where {$_.State -eq "Online"})[0]
-        write-verbose "path $DL needs to be updated to $NewPath ..."
-        $DFSConvert+=$NewPath
-        }
-    Else {
-        $NewPath=$null
-        write-verbose "Path $DL is not a folder target"
-        }
-    }
-
-#This simple sort makes sure we remap longer filename paths first and avoid breaking by mapping shorter paths first
-$DFSConvert = $DFSConvert | sort {$_Path.length}
-
-#Build FinalList with new path and permissions
 [array]$FinalList=$null
 $i=0
-write-verbose "Updating DFSNamespace..."
+
+#Begin a ForEach loop to update childlist to finallist...
+write-verbose "Gathering Information..."
 $ChildList | ForEach-Object {
     $Source = $_
+    $newpath=$null
     $newvalue=$null
-    ForEach ($DFS in $DFSConvert) {
-        $Test=$DFS.Path
-        $Testinj = [regex]::escape($Test)
-        $TargetTest = $DFS.TargetPath
-        If ($Source -like $Test+"*") {
-            Write-verbose "need to update $_ with $targettest..."
-            $NewValue = ($_ -replace($Testinj,$TargetTest))
+
+    #Check path for DFS Namespace and update if present
+    If (Get-DfsnFolderTarget $Source -ErrorAction SilentlyContinue| where {$_.State -eq "Online"}) {
+        $NewPath = (Get-DfsnFolderTarget $Source -ErrorAction SilentlyContinue| where {$_.State -eq "Online"})[0]
+        write-verbose "path needs to be updated to $NewPath ..."
+        $DFSConvert+=$NewPath
+        $newvalue = $newpath.TargetPath
+        }
+
+    #If current depth is not a namespace, check if full path contains a namespace and adjust UNC
+    ElseIf ($DFSConvert)  {
+        ForEach ($DFS in $DFSConvert) {
+            $Test=$DFS.Path
+            $Testinj = [regex]::escape($Test)
+            $TargetTest = $DFS.TargetPath
+            If ($Source -like $Test+"*") {
+                Write-verbose "need to update $_ with $targettest..."
+                $NewValue = ($_ -replace($Testinj,$TargetTest))
+                }
             }
         }
+
+    #if after both checks there's no match, set the new value to equal original
     if ($newvalue -eq $null) {$newvalue=$Source}
-    write-verbose "checking for explicit permissions on $newvalue..."
+
+    #with proper UNC known, check permisssions then build custom object to store all results
+    write-verbose "checking for explicit permissions on folder..."
     $perms = (Get-NTFSAccess -Path $newvalue | where {$_.IsInherited -eq $false} | Select Account, AccessRights)
+    write-verbose "Saving information ..."
     $tempobject = New-Object -TypeName PSObject
     $tempobject | Add-Member -MemberType NoteProperty -Name NameSpace -Value $ChildList[$i]
     $tempobject | Add-Member -MemberType NoteProperty -Name UNC -Value $NewValue
     $tempobject | Add-Member -MemberType NoteProperty -Name Permissions -Value $perms
-    #@{NameSpace=$ChildList[$i];UNC=$newvalue;Permissions=$perms}
     [array]$FinalList+=$tempobject
+
+    #incriment counter for next line in loop
     $i++
     }
 
 #Gather all non-inherited permissions and save based on defined type
 write-verbose "Generating report..."
 Switch ($OutputType) {
-    HTML {$finallist | select NameSpace, UNC, @{Label='Permissions';EXPRESSION={$_.permissions | out-string}} | ConvertTo-Html | Out-File $Output}
-    CSV {$finallist | select NameSpace, UNC, @{Label='Permissions';EXPRESSION={$_.permissions | out-string}} | Export-Csv $Output}
+    HTML {$finallist | select NameSpace, UNC, @{Label='Accounts';EXPRESSION={($_.permissions.account.accountname | out-string).Trim()}}, @{Label='Permissions';EXPRESSION={($_.permissions.AccessRights | out-string).Trim()}} | ConvertTo-Html | Out-File $Output}
+    CSV {$finallist | select NameSpace, UNC, @{Label='Accounts';EXPRESSION={($_.permissions.account.accountname | out-string).Trim()}}, @{Label='Permissions';EXPRESSION={($_.permissions.AccessRights | out-string).Trim()}} | Export-Csv $Output}
     }
 
 write-verbose "Done!"
